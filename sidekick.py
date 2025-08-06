@@ -1,4 +1,4 @@
-from typing import Annotated, Union
+from typing import Annotated
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, BaseMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from typing import List, Any, Optional, Dict
 from pydantic import BaseModel, Field
-from sidekick_tools import playwright_tools, get_all_tools
+from sidekick_tools import playwright_tools, other_tools
 import uuid
 import asyncio
 from datetime import datetime
@@ -17,7 +17,7 @@ from datetime import datetime
 load_dotenv(override=True)
 
 class State(TypedDict):
-    messages: Annotated[List[BaseMessage], add_messages]
+    messages: Annotated[List[Any], add_messages]
     success_criteria: str
     feedback_on_work: Optional[str]
     success_criteria_met: bool
@@ -31,28 +31,27 @@ class EvaluatorOutput(BaseModel):
 
 
 class Sidekick:
-    def __init__(self) -> None:
-        self.worker_llm_with_tools: Optional[Any] = None
-        self.evaluator_llm_with_output: Optional[Any] = None
-        self.tools: Optional[List[Any]] = None
-        self.llm_with_tools: Optional[Any] = None
-        self.graph: Optional[Any] = None
-        self.sidekick_id: str = str(uuid.uuid4())
-        self.memory: MemorySaver = MemorySaver()
-        self.browser: Optional[Any] = None
-        self.playwright: Optional[Any] = None
+    def __init__(self):
+        self.worker_llm_with_tools = None
+        self.evaluator_llm_with_output = None
+        self.tools = None
+        self.llm_with_tools = None
+        self.graph = None
+        self.sidekick_id = str(uuid.uuid4())
+        self.memory = MemorySaver()
+        self.browser = None
+        self.playwright = None
 
-    async def setup(self) -> None:
+    async def setup(self):
         self.tools, self.browser, self.playwright = await playwright_tools()
-        additional_tools = await get_all_tools()
-        self.tools += additional_tools
+        self.tools += await other_tools()
         worker_llm = ChatOpenAI(model="gpt-4o-mini")
         self.worker_llm_with_tools = worker_llm.bind_tools(self.tools)
         evaluator_llm = ChatOpenAI(model="gpt-4o-mini")
         self.evaluator_llm_with_output = evaluator_llm.with_structured_output(EvaluatorOutput)
         await self.build_graph()
 
-    def worker(self, state: State) -> Dict[str, List[BaseMessage]]:
+    def worker(self, state: State) -> Dict[str, Any]:
         system_message = f"""You are a helpful assistant that can use tools to complete tasks.
     You keep working on a task until either you have a question or clarification for the user, or the success criteria is met.
     You have many tools to help you, including tools to browse the internet, navigating and retrieving web pages.
@@ -77,21 +76,18 @@ class Sidekick:
     With this feedback, please continue the assignment, ensuring that you meet the success criteria or have a question for the user."""
         
         # Add in the system message
+
         found_system_message = False
-        messages = list(state["messages"])  # Create a copy to avoid modifying the original
-        for i, message in enumerate(messages):
+        messages = state["messages"]
+        for message in messages:
             if isinstance(message, SystemMessage):
-                messages[i] = SystemMessage(content=system_message)
+                message.content = system_message
                 found_system_message = True
-                break
         
         if not found_system_message:
             messages = [SystemMessage(content=system_message)] + messages
         
         # Invoke the LLM with tools
-        if self.worker_llm_with_tools is None:
-            raise RuntimeError("Worker LLM not initialized. Call setup() first.")
-            
         response = self.worker_llm_with_tools.invoke(messages)
         
         # Return updated state
@@ -99,16 +95,16 @@ class Sidekick:
             "messages": [response],
         }
 
+
     def worker_router(self, state: State) -> str:
         last_message = state["messages"][-1]
         
-        # Type guard: check if it's an AIMessage and has tool_calls
-        if isinstance(last_message, AIMessage) and hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
             return "tools"
         else:
             return "evaluator"
-
-    def format_conversation(self, messages: List[BaseMessage]) -> str:
+        
+    def format_conversation(self, messages: List[Any]) -> str:
         conversation = "Conversation history:\n\n"
         for message in messages:
             if isinstance(message, HumanMessage):
@@ -118,9 +114,8 @@ class Sidekick:
                 conversation += f"Assistant: {text}\n"
         return conversation
         
-    def evaluator(self, state: State) -> Dict[str, Union[List[Dict[str, str]], str, bool]]:
-        last_message = state["messages"][-1]
-        last_response = last_message.content if hasattr(last_message, 'content') else str(last_message)
+    def evaluator(self, state: State) -> State:
+        last_response = state["messages"][-1].content
 
         system_message = f"""You are an evaluator that determines if a task has been completed successfully by an Assistant.
     Assess the Assistant's last response based on the given criteria. Respond with your feedback, and with your decision on whether the success criteria has been met,
@@ -144,15 +139,12 @@ class Sidekick:
     Overall you should give the Assistant the benefit of the doubt if they say they've done something. But you should reject if you feel that more work should go into this.
 
     """
-        if state.get("feedback_on_work"):
+        if state["feedback_on_work"]:
             user_message += f"Also, note that in a prior attempt from the Assistant, you provided this feedback: {state['feedback_on_work']}\n"
             user_message += "If you're seeing the Assistant repeating the same mistakes, then consider responding that user input is required."
         
         evaluator_messages = [SystemMessage(content=system_message), HumanMessage(content=user_message)]
-        
-        if self.evaluator_llm_with_output is None:
-            raise RuntimeError("Evaluator LLM not initialized. Call setup() first.")
-            
+
         eval_result = self.evaluator_llm_with_output.invoke(evaluator_messages)
         new_state = {
             "messages": [{"role": "assistant", "content": f"Evaluator Feedback on this answer: {eval_result.feedback}"}],
@@ -168,10 +160,8 @@ class Sidekick:
         else:
             return "worker"
 
-    async def build_graph(self) -> None:
-        if self.tools is None:
-            raise RuntimeError("Tools not initialized. Call setup() first.")
-            
+
+    async def build_graph(self):
         # Set up Graph Builder with State
         graph_builder = StateGraph(State)
 
@@ -189,37 +179,23 @@ class Sidekick:
         # Compile the graph
         self.graph = graph_builder.compile(checkpointer=self.memory)
 
-    async def run_superstep(self, message: str, success_criteria: Optional[str], history: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        if self.graph is None:
-            raise RuntimeError("Graph not initialized. Call setup() first.")
-            
+    async def run_superstep(self, message, success_criteria, history):
         config = {"configurable": {"thread_id": self.sidekick_id}}
 
-        # Convert message string to proper message format
-        human_message = HumanMessage(content=message)
-        
         state = {
-            "messages": [human_message],
+            "messages": message,
             "success_criteria": success_criteria or "The answer should be clear and accurate",
             "feedback_on_work": None,
             "success_criteria_met": False,
             "user_input_needed": False
         }
         result = await self.graph.ainvoke(state, config=config)
-        
-        # Extract content safely
-        assistant_message = result["messages"][-2]
-        feedback_message = result["messages"][-1]
-        
-        assistant_content = assistant_message.content if hasattr(assistant_message, 'content') else str(assistant_message)
-        feedback_content = feedback_message.content if hasattr(feedback_message, 'content') else str(feedback_message)
-        
         user = {"role": "user", "content": message}
-        reply = {"role": "assistant", "content": assistant_content}
-        feedback = {"role": "assistant", "content": feedback_content}
+        reply = {"role": "assistant", "content": result["messages"][-2].content}
+        feedback = {"role": "assistant", "content": result["messages"][-1].content}
         return history + [user, reply, feedback]
     
-    def cleanup(self) -> None:
+    def cleanup(self):
         if self.browser:
             try:
                 loop = asyncio.get_running_loop()
