@@ -1,5 +1,6 @@
 import gradio as gr
 from sidekick import Sidekick
+from gradio.themes.base import Base 
 
 
 async def setup():
@@ -25,7 +26,7 @@ def free_resources(sidekick):
         print(f"Exception during cleanup: {e}")
 
 
-with gr.Blocks(title="Sidekick", theme=gr.themes.Default(primary_hue="emerald")) as ui:
+with gr.Blocks(title="Sidekick", theme=Base(primary_hue="emerald")) as ui:
     gr.Markdown("## Sidekick Personal Co-Worker")
     sidekick = gr.State(delete_callback=free_resources)
     
