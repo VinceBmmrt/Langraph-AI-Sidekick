@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, cast
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -13,6 +13,7 @@ from sidekick_tools import playwright_tools, other_tools
 import uuid
 import asyncio
 from datetime import datetime
+from langchain_core.runnables import RunnableConfig
 
 load_dotenv(override=True)
 
@@ -28,7 +29,13 @@ class EvaluatorOutput(BaseModel):
     feedback: str = Field(description="Feedback on the assistant's response")
     success_criteria_met: bool = Field(description="Whether the success criteria have been met")
     user_input_needed: bool = Field(description="True if more input is needed from the user, or clarifications, or the assistant is stuck")
+    success_criteria: str = Field(description="The success criteria for the task")
 
+
+class EvaluatorResult(BaseModel):
+    feedback: str
+    success_criteria_met: bool
+    user_input_needed: bool
 
 class Sidekick:
     def __init__(self):
@@ -88,6 +95,8 @@ class Sidekick:
             messages = [SystemMessage(content=system_message)] + messages
         
         # Invoke the LLM with tools
+        if self.worker_llm_with_tools is None:
+            raise RuntimeError("worker_llm_with_tools is not initialized. Please call setup() before using worker().")
         response = self.worker_llm_with_tools.invoke(messages)
         
         # Return updated state
@@ -115,6 +124,8 @@ class Sidekick:
         return conversation
         
     def evaluator(self, state: State) -> State:
+        if self.evaluator_llm_with_output is None:
+            raise RuntimeError("Evaluator LLM is not initialized. Please call setup() before using evaluator().")
         last_response = state["messages"][-1].content
 
         system_message = f"""You are an evaluator that determines if a task has been completed successfully by an Assistant.
@@ -145,13 +156,19 @@ class Sidekick:
         
         evaluator_messages = [SystemMessage(content=system_message), HumanMessage(content=user_message)]
 
-        eval_result = self.evaluator_llm_with_output.invoke(evaluator_messages)
-        new_state = {
-            "messages": [{"role": "assistant", "content": f"Evaluator Feedback on this answer: {eval_result.feedback}"}],
-            "feedback_on_work": eval_result.feedback,
-            "success_criteria_met": eval_result.success_criteria_met,
-            "user_input_needed": eval_result.user_input_needed
-        }
+        eval_result = cast(EvaluatorOutput, self.evaluator_llm_with_output.invoke(evaluator_messages))
+        print(f"EVALUATOR RESULT feedback: {eval_result}")
+        print(type(eval_result))
+        print(type(self.evaluator_llm_with_output.invoke(evaluator_messages)))
+        new_state: State = {
+    "messages": [{"role": "assistant", "content": f"Evaluator Feedback on this answer: {eval_result.feedback}"}],
+    "feedback_on_work": eval_result.feedback,
+    "success_criteria_met": eval_result.success_criteria_met,
+    "user_input_needed": eval_result.user_input_needed,
+    "success_criteria": state["success_criteria"],
+}
+
+
         return new_state
 
     def route_based_on_evaluation(self, state: State) -> str:
@@ -167,7 +184,11 @@ class Sidekick:
 
         # Add nodes
         graph_builder.add_node("worker", self.worker)
-        graph_builder.add_node("tools", ToolNode(tools=self.tools))
+        if self.tools is None:
+            tools_list = []
+        else:
+            tools_list = self.tools
+        graph_builder.add_node("tools", ToolNode(tools=tools_list))
         graph_builder.add_node("evaluator", self.evaluator)
 
         # Add edges
@@ -180,15 +201,19 @@ class Sidekick:
         self.graph = graph_builder.compile(checkpointer=self.memory)
 
     async def run_superstep(self, message, success_criteria, history):
-        config = {"configurable": {"thread_id": self.sidekick_id}}
-
-        state = {
+        # config = {"configurable": {"thread_id": self.sidekick_id}}
+        config = RunnableConfig(configurable={"thread_id": self.sidekick_id})
+        
+        state: State = {
             "messages": message,
             "success_criteria": success_criteria or "The answer should be clear and accurate",
             "feedback_on_work": None,
             "success_criteria_met": False,
             "user_input_needed": False
         }
+
+        if self.graph is None:
+            raise RuntimeError("self.graph n'est pas initialisé")
         result = await self.graph.ainvoke(state, config=config)
         user = {"role": "user", "content": message}
         reply = {"role": "assistant", "content": result["messages"][-2].content}
