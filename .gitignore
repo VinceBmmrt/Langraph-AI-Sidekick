@@ -8,6 +8,9 @@ wheels/
 
 sandbox/*
 
+credentials.json
+token.json
+
 # Virtual environments
 .venv
 .env

@@ -9,7 +9,7 @@ from langchain_community.tools.wikipedia.tool import WikipediaQueryRun
 from langchain_experimental.tools import PythonREPLTool
 from langchain_community.utilities import GoogleSerperAPIWrapper
 from langchain_community.utilities.wikipedia import WikipediaAPIWrapper
-
+from langchain_google_community import GmailToolkit
 
 
 load_dotenv(override=True)
@@ -17,6 +17,8 @@ pushover_token = os.getenv("PUSHOVER_TOKEN")
 pushover_user = os.getenv("PUSHOVER_USER")
 pushover_url = "https://api.pushover.net/1/messages.json"
 serper = GoogleSerperAPIWrapper()
+toolkit = GmailToolkit()
+
 
 async def playwright_tools():
     playwright = await async_playwright().start()
@@ -49,7 +51,9 @@ async def other_tools():
     wikipedia = WikipediaAPIWrapper(wiki_client=WikipediaQueryRun)
     wiki_tool = WikipediaQueryRun(api_wrapper=wikipedia)
 
+    gmail_tools = toolkit.get_tools()
+
     python_repl = PythonREPLTool()
 
-    return file_tools + [push_tool, tool_search, python_repl, wiki_tool]
+    return file_tools + [push_tool, tool_search, python_repl, wiki_tool] + gmail_tools
 
