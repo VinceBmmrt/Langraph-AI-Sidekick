@@ -1,5 +1,5 @@
 import gradio as gr
-from sidekick import Sidekick
+from sidekick.sidekick import Sidekick
 from gradio.themes.base import Base 
 
 
