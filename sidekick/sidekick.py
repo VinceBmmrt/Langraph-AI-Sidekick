@@ -4,14 +4,11 @@ from dotenv import load_dotenv
 from langgraph.prebuilt import ToolNode
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from typing import List, Any, Optional, Dict
-from tools.sidekick_tools import playwright_tools, other_tools
+from tools.sidekick_tools import get_all_tools, get_playwright_tools
 import uuid
 import asyncio
-from datetime import datetime
 from langchain_core.runnables import RunnableConfig
-from models.models import EvaluatorOutput, State, EvaluatorResult
+from models.models import EvaluatorOutput, State
 from typing import cast
 from sidekick.agents.worker import worker
 from sidekick.agents.evaluator import evaluator
@@ -33,8 +30,8 @@ class Sidekick:
         self.playwright = None
 
     async def setup(self):
-        self.tools, self.browser, self.playwright = await playwright_tools()
-        self.tools += await other_tools()
+        self.tools, self.browser, self.playwright = await get_playwright_tools()
+        self.tools += await get_all_tools()
         worker_llm = ChatOpenAI(model="gpt-4o-mini")
         self.worker_llm_with_tools = worker_llm.bind_tools(self.tools)
         evaluator_llm = ChatOpenAI(model="gpt-4o-mini")
