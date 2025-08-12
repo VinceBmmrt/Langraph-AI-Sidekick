@@ -42,6 +42,15 @@ AI-Sidekick is an experimental AI assistant built on the Langraph architecture, 
 
 ---
 
+## Demo
+
+You can see a demo of the AI Sidekick Assistant in action here:  
+[AI Sidekick Assistant Demo Video](https://drive.google.com/file/d/1q4y5yFmMHtf4N3U7WncXWXR6v8bpbm9k/view)  
+
+This demo showcases the assistant performing tasks such as web scraping with Playwright, summarizing search results, writing markdown files, and sending emails automatically.
+
+---
+
 ## Installation & Running 🚀
 
 1. **Prepare environment variables**  
